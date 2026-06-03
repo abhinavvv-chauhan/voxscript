@@ -74,32 +74,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
     
     try {
       setIsUploading(true);
-      const uploadRes = await fetch("/api/upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filename: file.name, contentType: file.type }),
-      });
-      if (!uploadRes.ok) throw new Error("Failed to get upload token");
-      const { uploadUrl, fileKey } = await uploadRes.json();
-
-      await fetch(uploadUrl, {
-        method: "PUT",
-        headers: { "Content-Type": file.type },
-        body: file,
-      });
-      setIsUploading(false);
-
-      setIsProcessing(true);
-      const processRes = await fetch("/api/process", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fileKey }),
-      });
-      if (!processRes.ok) throw new Error("AI Processing failed");
-      const { words } = await processRes.json();
-      setIsProcessing(false);
-
-      setIsRendering(true);
       
       if (!ffmpegRef.current) {
         ffmpegRef.current = new FFmpeg();
@@ -114,13 +88,36 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
         });
       }
 
+      console.log("Extracting audio locally...");
+      await ffmpeg.writeFile('input.mp4', await fetchFile(file));
+      await ffmpeg.exec(['-i', 'input.mp4', '-q:a', '0', '-map', 'a', 'audio.mp3']); 
+      
+      const audioData = await ffmpeg.readFile('audio.mp3');
+      const audioBlob = new Blob([audioData as any], { type: 'audio/mp3' });
+      setIsUploading(false);
+
+      setIsProcessing(true);
+      const formData = new FormData();
+      formData.append("audio", audioBlob, "audio.mp3");
+
+      const processRes = await fetch("/api/process", {
+        method: "POST",
+        body: formData, 
+      });
+
+      if (!processRes.ok) throw new Error("AI Processing failed");
+      const { words } = await processRes.json();
+      setIsProcessing(false);
+
+      setIsRendering(true);
+
       const fontURL = 'https://raw.githubusercontent.com/ffmpegwasm/testdata/master/arial.ttf';
       await ffmpeg.writeFile('arial.ttf', await fetchFile(fontURL));
 
-      await ffmpeg.writeFile('input.mp4', await fetchFile(file));
       const assString = generateAssString(words);
       await ffmpeg.writeFile('subs.ass', new TextEncoder().encode(assString));
 
+      console.log("Burning pixels...");
       await ffmpeg.exec(['-i', 'input.mp4', '-vf', 'ass=subs.ass:fontsdir=/', 'output.mp4']);
 
       const data = await ffmpeg.readFile('output.mp4');
