@@ -217,8 +217,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
                         disabled={isUploading || isProcessing || isRendering}
                         className="px-4 py-3 bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-sm rounded-lg flex-[2] flex justify-center items-center gap-2 transition-colors disabled:opacity-50 shadow-[0_0_15px_rgba(14,165,233,0.3)] cursor-pointer"
                       >
-                        {isUploading && "1/3: Uploading to Cloud..."}
-                        {isProcessing && "2/3: AI Analyzing Audio..."}
+                        {isUploading && "1/3: Extracting Audio..."}
+                        {isProcessing && "2/3: AI Generating Transcript..."}
                         {isRendering && "3/3: Burning Pixels..."}
                         {!isUploading && !isProcessing && !isRendering && "Generate Captions"}
                       </button>
