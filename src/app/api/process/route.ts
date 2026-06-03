@@ -6,18 +6,7 @@ import path from "path";
 import { pipeline } from "stream/promises";
 import ffmpeg from "fluent-ffmpeg";
 
-const s3Client = new S3Client({
-  region: process.env.AWS_REGION!,
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
-  },
-});
-
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY!,
-});
-
+// Helper function to extract and compress audio
 const extractAudio = (videoPath: string, audioPath: string): Promise<string> => {
   return new Promise((resolve, reject) => {
     ffmpeg(videoPath)
@@ -41,6 +30,19 @@ const extractAudio = (videoPath: string, audioPath: string): Promise<string> => 
 
 export async function POST(request: Request) {
   try {
+    // 1. Initialize Clients safely inside the route
+    const s3Client = new S3Client({
+      region: process.env.AWS_REGION!,
+      credentials: {
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+      },
+    });
+
+    const groq = new Groq({
+      apiKey: process.env.GROQ_API_KEY!,
+    });
+
     const { fileKey } = await request.json();
     if (!fileKey) return NextResponse.json({ error: "No file key provided" }, { status: 400 });
 
@@ -51,6 +53,7 @@ export async function POST(request: Request) {
     const videoFilePath = path.join(tempDir, fileKey);
     const audioFilePath = path.join(tempDir, `${safeBaseName}-audio.mp3`);
 
+    // 2. Download from AWS S3
     console.log(`Downloading ${fileKey} from S3...`);
     const command = new GetObjectCommand({
       Bucket: process.env.AWS_S3_BUCKET_NAME!,
@@ -61,9 +64,11 @@ export async function POST(request: Request) {
     // @ts-ignore
     await pipeline(Body, fs.createWriteStream(videoFilePath));
 
+    // 3. Extract Audio
     console.log("Extracting audio with FFmpeg...");
     await extractAudio(videoFilePath, audioFilePath);
 
+    // 4. Send to Groq Whisper
     console.log("Sending to Groq Whisper API...");
     const transcription = await groq.audio.transcriptions.create({
       file: fs.createReadStream(audioFilePath),
@@ -72,22 +77,25 @@ export async function POST(request: Request) {
       timestamp_granularities: ["word"], 
     }) as any; 
 
+    // 5. Cleanup
     fs.unlinkSync(videoFilePath);
     fs.unlinkSync(audioFilePath);
 
     console.log("Groq Transcription complete!");
 
     return NextResponse.json({ 
-      success: true,
+      success: true, 
       text: transcription.text,
       words: transcription.words 
     });
 
-  } catch (error:any) {
+  } catch (error: any) {
     console.error("Engine failure:", error.message || error);
+    
     if (error.message === "SILENT_VIDEO") {
       return NextResponse.json({ error: "No audio track found in this video. Please upload a video with spoken dialogue." }, { status: 400 });
     }
+
     return NextResponse.json({ error: "Failed to process video" }, { status: 500 });
   }
 }

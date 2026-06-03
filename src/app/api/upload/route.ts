@@ -2,16 +2,17 @@ import { NextResponse } from "next/server";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
-const s3Client = new S3Client({
-  region: process.env.AWS_REGION!,
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
-  },
-});
-
 export async function POST(request: Request) {
   try {
+    // 1. Initialize S3 Client safely inside the route
+    const s3Client = new S3Client({
+      region: process.env.AWS_REGION!,
+      credentials: {
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+      },
+    });
+
     const { filename, contentType } = await request.json();
     if (!filename || !contentType) {
       return NextResponse.json({ error: "Filename and content type required" }, { status: 400 });
@@ -26,6 +27,7 @@ export async function POST(request: Request) {
     });
 
     const signedUrl = await getSignedUrl(s3Client, command, { expiresIn: 60 });
+    
     return NextResponse.json({ uploadUrl: signedUrl, fileKey: uniqueFilename });
   } catch (error) {
     console.error("Error generating presigned URL:", error);
