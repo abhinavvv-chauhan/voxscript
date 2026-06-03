@@ -6,7 +6,6 @@ import path from "path";
 import { pipeline } from "stream/promises";
 import ffmpeg from "fluent-ffmpeg";
 
-// Format seconds to ASS timestamp format
 const formatTime = (seconds: number) => {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
@@ -15,7 +14,6 @@ const formatTime = (seconds: number) => {
   return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${cs.toString().padStart(2, '0')}`;
 };
 
-// Generates the kinetic TikTok-style subtitle file
 const generateAssFile = (words: any[], outputPath: string) => {
   let assContent = `[Script Info]
 ScriptType: v4.00+
@@ -57,13 +55,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   fs.writeFileSync(outputPath, assContent);
 };
 
-// FFmpeg wrapper using relative paths for Windows/Docker safety
 const burnSubtitles = (videoPath: string, assPath: string, outputPath: string): Promise<void> => {
   return new Promise((resolve, reject) => {
     const relativeAssPath = path.relative(process.cwd(), assPath).replace(/\\/g, "/"); 
     
     ffmpeg(videoPath)
-      .outputOptions([`-vf ass='${relativeAssPath}'`])
+      .outputOptions([
+        `-vf ass='${relativeAssPath}'`,
+        `-preset ultrafast`, 
+        `-threads 1`         
+      ])
       .output(outputPath)
       .on("end", () => resolve())
       .on("error", (err: any) => reject(err))
@@ -73,7 +74,6 @@ const burnSubtitles = (videoPath: string, assPath: string, outputPath: string): 
 
 export async function POST(request: Request) {
   try {
-    // 1. Initialize S3 Client safely inside the route
     const s3Client = new S3Client({
       region: process.env.AWS_REGION!,
       credentials: {
@@ -93,7 +93,6 @@ export async function POST(request: Request) {
     const assFile = path.join(tempDir, `${safeBaseName}.ass`);
     const outputVideo = path.join(tempDir, `${safeBaseName}-final.mp4`);
 
-    // 2. Download from S3
     console.log("Downloading source video...");
     const getCommand = new GetObjectCommand({
       Bucket: process.env.AWS_S3_BUCKET_NAME!,
@@ -103,15 +102,12 @@ export async function POST(request: Request) {
     // @ts-ignore
     await pipeline(Body, fs.createWriteStream(inputVideo));
 
-    // 3. Generate Subtitle File
     console.log("Generating .ass subtitle file...");
     generateAssFile(words, assFile);
 
-    // 4. Burn Pixels with FFmpeg
     console.log("Burning subtitles into video...");
     await burnSubtitles(inputVideo, assFile, outputVideo);
 
-    // 5. Upload Final Video to S3
     console.log("Uploading rendered video to S3...");
     const finalKey = `rendered/${safeBaseName}-final.mp4`;
     const uploadStream = fs.createReadStream(outputVideo);
@@ -124,14 +120,12 @@ export async function POST(request: Request) {
     });
     await s3Client.send(putCommand);
 
-    // 6. Generate Presigned URL
     const getFinalCommand = new GetObjectCommand({
       Bucket: process.env.AWS_S3_BUCKET_NAME!,
       Key: finalKey,
     });
     const finalUrl = await getSignedUrl(s3Client, getFinalCommand, { expiresIn: 3600 }); 
 
-    // 7. Cleanup
     fs.unlinkSync(inputVideo);
     fs.unlinkSync(assFile);
     fs.unlinkSync(outputVideo);

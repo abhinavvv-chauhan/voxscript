@@ -6,7 +6,6 @@ import path from "path";
 import { pipeline } from "stream/promises";
 import ffmpeg from "fluent-ffmpeg";
 
-// Helper function to extract and compress audio
 const extractAudio = (videoPath: string, audioPath: string): Promise<string> => {
   return new Promise((resolve, reject) => {
     ffmpeg(videoPath)
@@ -30,7 +29,6 @@ const extractAudio = (videoPath: string, audioPath: string): Promise<string> => 
 
 export async function POST(request: Request) {
   try {
-    // 1. Initialize Clients safely inside the route
     const s3Client = new S3Client({
       region: process.env.AWS_REGION!,
       credentials: {
@@ -53,7 +51,6 @@ export async function POST(request: Request) {
     const videoFilePath = path.join(tempDir, fileKey);
     const audioFilePath = path.join(tempDir, `${safeBaseName}-audio.mp3`);
 
-    // 2. Download from AWS S3
     console.log(`Downloading ${fileKey} from S3...`);
     const command = new GetObjectCommand({
       Bucket: process.env.AWS_S3_BUCKET_NAME!,
@@ -64,11 +61,9 @@ export async function POST(request: Request) {
     // @ts-ignore
     await pipeline(Body, fs.createWriteStream(videoFilePath));
 
-    // 3. Extract Audio
     console.log("Extracting audio with FFmpeg...");
     await extractAudio(videoFilePath, audioFilePath);
 
-    // 4. Send to Groq Whisper
     console.log("Sending to Groq Whisper API...");
     const transcription = await groq.audio.transcriptions.create({
       file: fs.createReadStream(audioFilePath),
@@ -77,7 +72,6 @@ export async function POST(request: Request) {
       timestamp_granularities: ["word"], 
     }) as any; 
 
-    // 5. Cleanup
     fs.unlinkSync(videoFilePath);
     fs.unlinkSync(audioFilePath);
 

@@ -4,7 +4,6 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 export async function POST(request: Request) {
   try {
-    // 1. Initialize S3 Client safely inside the route
     const s3Client = new S3Client({
       region: process.env.AWS_REGION!,
       credentials: {
