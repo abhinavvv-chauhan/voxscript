@@ -1,15 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { FFmpeg } from "@ffmpeg/ffmpeg";
+import { fetchFile, toBlobURL } from "@ffmpeg/util";
+import { useRef, useState } from "react";
 import { Upload, Sparkles, Zap, ShieldCheck, PlayCircle, Loader2 } from "lucide-react";
 
 export default function Home() {
+  const ffmpegRef = useRef<FFmpeg | null>(null);
   const [isRendering, setIsRendering] = useState(false);
   const [finalVideo, setFinalVideo] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
-  const [uploadedFileKey, setUploadedFileKey] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [transcript, setTranscript] = useState<any[] | null>(null);
 
@@ -21,16 +23,56 @@ export default function Home() {
     }
   };
 
-  // The Automated 1-Click Pipeline
+  const generateAssString = (words: any[]) => {
+    const formatTime = (seconds: number) => {
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = Math.floor(seconds % 60);
+      const cs = Math.floor((seconds % 1) * 100);
+      return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${cs.toString().padStart(2, '0')}`;
+    };
+
+    let assContent = `[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: TikTok,Arial,85,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,0,2,20,20,280,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
+
+    const CHUNK_SIZE = 5; 
+    for (let i = 0; i < words.length; i += CHUNK_SIZE) {
+      const chunk = words.slice(i, i + CHUNK_SIZE);
+      for (let j = 0; j < chunk.length; j++) {
+        const w = chunk[j];
+        const highlightText = chunk.map((cw, idx) => 
+          idx === j ? `{\\c&H00E9A50E&}${cw.word}{\\c&HFFFFFF&}` : cw.word
+        ).join(" ");
+        
+        assContent += `Dialogue: 0,${formatTime(w.start)},${formatTime(w.end)},TikTok,,0,0,0,,${highlightText}\n`;
+
+        if (j < chunk.length - 1) {
+          const nextWord = chunk[j + 1];
+          if (nextWord.start - w.end > 0.05) { 
+             const whiteText = chunk.map(cw => cw.word).join(" ");
+             assContent += `Dialogue: 0,${formatTime(w.end)},${formatTime(nextWord.start)},TikTok,,0,0,0,,${whiteText}\n`;
+          }
+        }
+      }
+    }
+    return assContent;
+  };
+
   const handleMagicGenerate = async () => {
     if (!file) return;
-    
-    // Reset states for a fresh run
     setTranscript(null);
     setFinalVideo(null);
     
     try {
-      // 1. Upload Phase
       setIsUploading(true);
       const uploadRes = await fetch("/api/upload", {
         method: "POST",
@@ -47,7 +89,6 @@ export default function Home() {
       });
       setIsUploading(false);
 
-      // 2. AI Processing Phase
       setIsProcessing(true);
       const processRes = await fetch("/api/process", {
         method: "POST",
@@ -56,20 +97,36 @@ export default function Home() {
       });
       if (!processRes.ok) throw new Error("AI Processing failed");
       const { words } = await processRes.json();
-      setTranscript(words);
       setIsProcessing(false);
 
-      // 3. Rendering Phase
       setIsRendering(true);
-      const renderRes = await fetch("/api/render", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fileKey, words }), 
-      });
-      if (!renderRes.ok) throw new Error("Video Render failed");
-      const { finalUrl } = await renderRes.json();
       
-      // 4. Success!
+      if (!ffmpegRef.current) {
+        ffmpegRef.current = new FFmpeg();
+      }
+      const ffmpeg = ffmpegRef.current;
+      
+      const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+      if (!ffmpeg.loaded) {
+        await ffmpeg.load({
+          coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+          wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+        });
+      }
+
+      const fontURL = 'https://raw.githubusercontent.com/ffmpegwasm/testdata/master/arial.ttf';
+      await ffmpeg.writeFile('arial.ttf', await fetchFile(fontURL));
+
+      await ffmpeg.writeFile('input.mp4', await fetchFile(file));
+      const assString = generateAssString(words);
+      await ffmpeg.writeFile('subs.ass', new TextEncoder().encode(assString));
+
+      await ffmpeg.exec(['-i', 'input.mp4', '-vf', 'ass=subs.ass:fontsdir=/', 'output.mp4']);
+
+      const data = await ffmpeg.readFile('output.mp4');
+      const finalBlob = new Blob([data as any], { type: 'video/mp4' });
+      const finalUrl = URL.createObjectURL(finalBlob);
+      
       setFinalVideo(finalUrl);
 
     } catch (error) {
@@ -78,30 +135,6 @@ export default function Home() {
     } finally {
       setIsUploading(false);
       setIsProcessing(false);
-      setIsRendering(false);
-    }
-  };
-
-  const handleRender = async () => {
-    if (!file || !transcript) return;
-    setIsRendering(true);
-
-    try {
-      const response = await fetch("/api/render", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fileKey: uploadedFileKey, words: transcript }), 
-      });
-
-      if (!response.ok) throw new Error("Render failed");
-      
-      const data = await response.json();
-      setFinalVideo(data.finalUrl); 
-
-    } catch (error) {
-      console.error("Render error:", error);
-      alert("Failed to render final video. Check console.");
-    } finally {
       setIsRendering(false);
     }
   };
@@ -159,10 +192,8 @@ export default function Home() {
                 </div>
                 
 
-                {/* Action Buttons & Status */}
                 <div className="flex flex-col gap-3 w-full mt-4">
                   
-                  {/* Final Download Box */}
                   {finalVideo && (
                     <div className="w-full bg-cyan-500/10 border border-cyan-500/30 rounded-lg p-4 text-center mb-2">
                        <h4 className="text-cyan-400 font-bold mb-3">Render Complete!</h4>
@@ -183,7 +214,6 @@ export default function Home() {
                       </button>
                     )}
                     
-                    {/* The Single Magic Button */}
                     {!finalVideo && (
                       <button 
                         onClick={handleMagicGenerate}
