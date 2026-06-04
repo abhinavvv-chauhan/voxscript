@@ -3,7 +3,7 @@
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile, toBlobURL } from "@ffmpeg/util";
 import { useRef, useState } from "react";
-import { Upload, Sparkles, Zap, ShieldCheck, PlayCircle, Loader2 } from "lucide-react";
+import { Upload, Sparkles, Zap, ShieldCheck } from "lucide-react";
 
 export default function Home() {
   const ffmpegRef = useRef<FFmpeg | null>(null);
@@ -14,6 +14,7 @@ export default function Home() {
   const [isUploading, setIsUploading] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [transcript, setTranscript] = useState<any[] | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -67,7 +68,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
     return assContent;
   };
 
-  const handleMagicGenerate = async () => {
+  const handleWordChange = (index: number, newWord: string) => {
+    if (!transcript) return;
+    const newTranscript = [...transcript];
+    newTranscript[index].word = newWord;
+    setTranscript(newTranscript);
+  };
+
+  const handleGenerateTranscript = async () => {
     if (!file) return;
 
     try {
@@ -114,7 +122,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
         .sort(); 
 
       setIsUploading(false);
-
       setIsProcessing(true);
       console.log(`Processing ${chunkFiles.length} chunks via Groq Whisper...`);
 
@@ -144,14 +151,31 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
       const resolvedChunks = await Promise.all(transcriptPromises);
       const allWords = resolvedChunks.flat();
       
+      setTranscript(allWords);
+      setIsEditing(true);
       setIsProcessing(false);
 
+    } catch (error) {
+      console.error("Pipeline crashed:", error);
+      alert("An error occurred during video processing. Check the console for details.");
+      setIsUploading(false);
+      setIsProcessing(false);
+    }
+  };
+
+  const handleBurnVideo = async () => {
+    if (!transcript) return;
+    
+    try {
       setIsRendering(true);
+      setIsEditing(false);
+      const ffmpeg = ffmpegRef.current;
+      if (!ffmpeg) throw new Error("FFmpeg not initialized");
 
       const fontURL = 'https://raw.githubusercontent.com/ffmpegwasm/testdata/master/arial.ttf';
       await ffmpeg.writeFile('arial.ttf', await fetchFile(fontURL));
 
-      const assString = generateAssString(allWords);
+      const assString = generateAssString(transcript);
       await ffmpeg.writeFile('subs.ass', new TextEncoder().encode(assString));
 
       console.log("Burning pixels...");
@@ -170,11 +194,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
       setFinalVideo(finalUrl);
 
     } catch (error) {
-      console.error("Pipeline crashed:", error);
-      alert("An error occurred during video processing. Check the console for details.");
+      console.error("Render crashed:", error);
+      alert("Failed to render final video.");
     } finally {
-      setIsUploading(false);
-      setIsProcessing(false);
       setIsRendering(false);
     }
   };
@@ -231,7 +253,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
                    <video src={previewUrl} className="w-full h-full object-contain" controls />
                 </div>
                 
-
                 <div className="flex flex-col gap-3 w-full mt-4">
                   
                   {finalVideo && (
@@ -243,8 +264,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
                     </div>
                   )}
 
+                  {isEditing && transcript && (
+                    <div className="w-full h-48 overflow-y-auto bg-black border border-zinc-800 rounded-lg p-4 mb-2 flex flex-wrap gap-2 content-start">
+                      {transcript.map((w, i) => (
+                        <input
+                          key={i}
+                          type="text"
+                          value={w.word}
+                          onChange={(e) => handleWordChange(i, e.target.value)}
+                          className="bg-zinc-900 border border-zinc-800 text-zinc-300 px-2 py-1 rounded text-sm w-auto focus:border-cyan-500 focus:outline-none"
+                          style={{ width: `${Math.max(w.word.length + 1, 3)}ch` }}
+                        />
+                      ))}
+                    </div>
+                  )}
+
                   <div className="flex gap-3 w-full">
-                    {!finalVideo && (
+                    {!finalVideo && !isEditing && (
                       <button 
                         onClick={() => { setFile(null); setPreviewUrl(null); }}
                         disabled={isUploading || isProcessing || isRendering}
@@ -254,9 +290,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
                       </button>
                     )}
                     
-                    {!finalVideo && (
+                    {!finalVideo && !isEditing && (
                       <button 
-                        onClick={handleMagicGenerate}
+                        onClick={handleGenerateTranscript}
                         disabled={isUploading || isProcessing || isRendering}
                         className="px-4 py-3 bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-sm rounded-lg flex-[2] flex justify-center items-center gap-2 transition-colors disabled:opacity-50 shadow-[0_0_15px_rgba(14,165,233,0.3)] cursor-pointer"
                       >
@@ -267,9 +303,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
                       </button>
                     )}
 
+                    {isEditing && (
+                      <button 
+                        onClick={handleBurnVideo}
+                        className="px-4 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm rounded-lg w-full transition-colors shadow-[0_0_15px_rgba(16,185,129,0.3)] cursor-pointer"
+                      >
+                        Approve & Burn Video
+                      </button>
+                    )}
+
                     {finalVideo && (
                       <button 
-                        onClick={() => { setFile(null); setPreviewUrl(null); setTranscript(null); setFinalVideo(null); }}
+                        onClick={() => { setFile(null); setPreviewUrl(null); setTranscript(null); setFinalVideo(null); setIsEditing(false); }}
                         className="px-4 py-3 bg-zinc-900 border border-zinc-800 text-zinc-300 hover:text-white font-semibold text-sm rounded-lg w-full transition-colors cursor-pointer"
                       >
                         Process Another Video
