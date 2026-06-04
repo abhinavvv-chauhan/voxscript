@@ -80,12 +80,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
       }
       const ffmpeg = ffmpegRef.current;
       
-      const baseURL = 'https://unpkg.com/@ffmpeg/core-mt@0.12.6/dist/umd';
+      const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
       if (!ffmpeg.loaded) {
         await ffmpeg.load({
           coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
           wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-          workerURL: await toBlobURL(`${baseURL}/ffmpeg-core.worker.js`, 'text/javascript'), 
         });
       }
 
@@ -118,12 +117,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
       const assString = generateAssString(words);
       await ffmpeg.writeFile('subs.ass', new TextEncoder().encode(assString));
 
-      console.log("Burning pixels with multi-threading...");
+      console.log("Burning pixels...");
       await ffmpeg.exec([
         '-i', 'input.mp4', 
         '-vf', 'ass=subs.ass:fontsdir=/', 
         '-preset', 'ultrafast', 
-        '-threads', '0',        
         'output.mp4'
       ]);
 
