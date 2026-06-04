@@ -69,18 +69,21 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
 
   const handleMagicGenerate = async () => {
     if (!file) return;
-    setTranscript(null);
-    setFinalVideo(null);
-    
+
     try {
-      setIsUploading(true);
+      setIsUploading(true); 
       
       if (!ffmpegRef.current) {
         ffmpegRef.current = new FFmpeg();
       }
       const ffmpeg = ffmpegRef.current;
       
-      const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+      ffmpeg.on('progress', ({ progress }) => {
+         const percentage = Math.round(progress * 100);
+         console.log(`FFmpeg Progress: ${percentage}%`);
+      });
+
+      const baseURL = '/ffmpeg';
       if (!ffmpeg.loaded) {
         await ffmpeg.load({
           coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
@@ -88,8 +91,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
         });
       }
 
-      console.log("Extracting audio locally...");
+      console.log("Extracting and chunking audio locally...");
       await ffmpeg.writeFile('input.mp4', await fetchFile(file));
+      
+      const CHUNK_DURATION = 50; 
       
       await ffmpeg.exec([
         '-i', 'input.mp4', 
@@ -97,24 +102,48 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
         '-acodec', 'pcm_s16le', 
         '-ar', '16000', 
         '-ac', '1', 
-        'audio.wav'
+        '-f', 'segment', 
+        '-segment_time', `${CHUNK_DURATION}`, 
+        'chunk_%03d.wav'
       ]); 
       
-      const audioData = await ffmpeg.readFile('audio.wav');
-      const audioBlob = new Blob([audioData as any], { type: 'audio/wav' });
+      const files = await ffmpeg.listDir('/');
+      const chunkFiles = files
+        .filter((f) => f.name.startsWith('chunk_') && f.name.endsWith('.wav'))
+        .map((f) => f.name)
+        .sort(); 
+
       setIsUploading(false);
 
       setIsProcessing(true);
-      const formData = new FormData();
-      formData.append("audio", audioBlob, "audio.wav");
+      console.log(`Processing ${chunkFiles.length} chunks via Groq Whisper...`);
 
-      const processRes = await fetch("/api/process", {
-        method: "POST",
-        body: formData, 
+      const transcriptPromises = chunkFiles.map(async (chunkName, index) => {
+        const audioData = await ffmpeg.readFile(chunkName);
+        const audioBlob = new Blob([audioData as any], { type: 'audio/wav' });
+
+        const formData = new FormData();
+        formData.append("audio", audioBlob, chunkName);
+
+        const res = await fetch("/api/process", {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!res.ok) throw new Error(`AI Processing failed for ${chunkName}`);
+        const { words } = await res.json();
+
+        const timeOffset = index * CHUNK_DURATION;
+        return words.map((w: any) => ({
+          ...w,
+          start: w.start + timeOffset,
+          end: w.end + timeOffset
+        }));
       });
 
-      if (!processRes.ok) throw new Error("AI Processing failed");
-      const { words } = await processRes.json();
+      const resolvedChunks = await Promise.all(transcriptPromises);
+      const allWords = resolvedChunks.flat();
+      
       setIsProcessing(false);
 
       setIsRendering(true);
@@ -122,10 +151,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
       const fontURL = 'https://raw.githubusercontent.com/ffmpegwasm/testdata/master/arial.ttf';
       await ffmpeg.writeFile('arial.ttf', await fetchFile(fontURL));
 
-      const assString = generateAssString(words);
+      const assString = generateAssString(allWords);
       await ffmpeg.writeFile('subs.ass', new TextEncoder().encode(assString));
 
       console.log("Burning pixels...");
+      
       await ffmpeg.exec([
         '-i', 'input.mp4', 
         '-vf', 'ass=subs.ass:fontsdir=/', 
@@ -141,7 +171,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
 
     } catch (error) {
       console.error("Pipeline crashed:", error);
-      alert("Something went wrong. Check the console.");
+      alert("An error occurred during video processing. Check the console for details.");
     } finally {
       setIsUploading(false);
       setIsProcessing(false);
