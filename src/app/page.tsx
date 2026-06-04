@@ -265,17 +265,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
                   )}
 
                   {isEditing && transcript && (
-                    <div className="w-full h-48 overflow-y-auto bg-black border border-zinc-800 rounded-lg p-4 mb-2 flex flex-wrap gap-2 content-start">
-                      {transcript.map((w, i) => (
-                        <input
-                          key={i}
-                          type="text"
-                          value={w.word}
-                          onChange={(e) => handleWordChange(i, e.target.value)}
-                          className="bg-zinc-900 border border-zinc-800 text-zinc-300 px-2 py-1 rounded text-sm w-auto focus:border-cyan-500 focus:outline-none"
-                          style={{ width: `${Math.max(w.word.length + 1, 3)}ch` }}
-                        />
-                      ))}
+                    <div className="w-full h-[40vh] min-h-[300px] overflow-y-auto bg-zinc-950 border border-zinc-800 rounded-xl p-5 md:p-6 mb-4 shadow-inner">
+                      <div className="flex flex-wrap content-start gap-x-2 gap-y-3 md:gap-x-3 md:gap-y-4">
+                        {transcript.map((w, i) => (
+                          <input
+                            key={i}
+                            type="text"
+                            value={w.word}
+                            onChange={(e) => handleWordChange(i, e.target.value)}
+                            className="bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-100 px-3 py-2 md:py-1.5 rounded-lg text-base md:text-lg outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 focus:bg-black transition-all text-center"
+                            style={{ width: `calc(${Math.max(w.word.length, 2)}ch + 2.5rem)` }}
+                          />
+                        ))}
+                      </div>
                     </div>
                   )}
 
