@@ -90,15 +90,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
 
       console.log("Extracting audio locally...");
       await ffmpeg.writeFile('input.mp4', await fetchFile(file));
-      await ffmpeg.exec(['-i', 'input.mp4', '-q:a', '0', '-map', 'a', 'audio.mp3']); 
       
-      const audioData = await ffmpeg.readFile('audio.mp3');
-      const audioBlob = new Blob([audioData as any], { type: 'audio/mp3' });
+      await ffmpeg.exec([
+        '-i', 'input.mp4', 
+        '-vn', 
+        '-acodec', 'pcm_s16le', 
+        '-ar', '16000', 
+        '-ac', '1', 
+        'audio.wav'
+      ]); 
+      
+      const audioData = await ffmpeg.readFile('audio.wav');
+      const audioBlob = new Blob([audioData as any], { type: 'audio/wav' });
       setIsUploading(false);
 
       setIsProcessing(true);
       const formData = new FormData();
-      formData.append("audio", audioBlob, "audio.mp3");
+      formData.append("audio", audioBlob, "audio.wav");
 
       const processRes = await fetch("/api/process", {
         method: "POST",
