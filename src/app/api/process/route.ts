@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import Groq from "groq-sdk";
-import fs from "fs";
-import path from "path";
-import os from "os";
+
+export const runtime = 'edge'; 
 
 export async function POST(request: Request) {
   try {
@@ -15,19 +14,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "No audio file provided" }, { status: 400 });
     }
 
-    const buffer = Buffer.from(await audioFile.arrayBuffer());
-    const tempFilePath = path.join(os.tmpdir(), `${Date.now()}-audio.mp3`);
-    fs.writeFileSync(tempFilePath, buffer);
-
-    console.log("Sending audio to Groq...");
+    console.log("Sending audio to Groq via Edge...");
+    
     const transcription = await groq.audio.transcriptions.create({
-      file: fs.createReadStream(tempFilePath),
+      file: audioFile, 
       model: "whisper-large-v3-turbo",
       response_format: "verbose_json",
       timestamp_granularities: ["word"],
     }) as any;
-
-    fs.unlinkSync(tempFilePath);
 
     return NextResponse.json({ 
       success: true, 
