@@ -15,6 +15,7 @@ export default function Home() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [transcript, setTranscript] = useState<any[] | null>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [dubLanguage, setDubLanguage] = useState("original");
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -24,7 +25,7 @@ export default function Home() {
     }
   };
 
-  const generateAssString = (words: any[]) => {
+  const generateAssString = (words: any[], fontName: string = "Arial") => {
     const formatTime = (seconds: number) => {
       const h = Math.floor(seconds / 3600);
       const m = Math.floor((seconds % 3600) / 60);
@@ -40,7 +41,7 @@ PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: TikTok,Arial,85,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,0,2,20,20,280,1
+Style: TikTok,${fontName},85,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,5,0,2,20,20,280,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
@@ -135,11 +136,60 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
       setIsEditing(false);
       const ffmpeg = ffmpegRef.current;
       if (!ffmpeg) throw new Error("FFmpeg not initialized");
-      const fontURL = "https://raw.githubusercontent.com/ffmpegwasm/testdata/master/arial.ttf";
-      await ffmpeg.writeFile("arial.ttf", await fetchFile(fontURL));
-      const assString = generateAssString(transcript);
+      
+      let finalTranscript = transcript;
+      let ffmpegArgs = ["-i", "input.mp4", "-vf", "ass=subs.ass:fontsdir=/", "-preset", "ultrafast", "output.mp4"];
+
+      let fontURL = "https://raw.githubusercontent.com/ffmpegwasm/testdata/master/arial.ttf";
+      let fontName = "Arial";
+      
+      if (dubLanguage === "hi") {
+        fontURL = "https://raw.githubusercontent.com/openmaptiles/fonts/master/noto-sans/NotoSansDevanagari-Regular.ttf";
+        fontName = "Noto Sans Devanagari";
+      } else if (["ru", "es", "fr"].includes(dubLanguage)) {
+        fontURL = "https://raw.githubusercontent.com/openmaptiles/fonts/master/noto-sans/NotoSans-Regular.ttf";
+        fontName = "Noto Sans";
+      }
+
+      await ffmpeg.writeFile("customfont.ttf", await fetchFile(fontURL));
+
+      if (dubLanguage !== "original") {
+        const fullText = transcript.map(w => w.word).join(" ");
+        const dubRes = await fetch("/api/dub", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: fullText, language: dubLanguage })
+        });
+        
+        if (!dubRes.ok) throw new Error("Dubbing API failed");
+        
+        const { audioBase64, translatedTranscript } = await dubRes.json();
+        finalTranscript = translatedTranscript;
+        
+        const byteCharacters = atob(audioBase64);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const audioData = new Uint8Array(byteNumbers);
+        await ffmpeg.writeFile("dub.mp3", audioData);
+
+        ffmpegArgs = [
+          "-i", "input.mp4",
+          "-i", "dub.mp3",
+          "-map", "0:v:0",
+          "-map", "1:a:0",
+          "-vf", "ass=subs.ass:fontsdir=/",
+          "-preset", "ultrafast",
+          "-shortest",
+          "output.mp4"
+        ];
+      }
+
+      const assString = generateAssString(finalTranscript, fontName);
       await ffmpeg.writeFile("subs.ass", new TextEncoder().encode(assString));
-      await ffmpeg.exec(["-i", "input.mp4", "-vf", "ass=subs.ass:fontsdir=/", "-preset", "ultrafast", "output.mp4"]);
+      await ffmpeg.exec(ffmpegArgs);
+      
       const data = await ffmpeg.readFile("output.mp4");
       const finalBlob = new Blob([data as any], { type: "video/mp4" });
       setFinalVideo(URL.createObjectURL(finalBlob));
@@ -157,6 +207,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
     setTranscript(null);
     setFinalVideo(null);
     setIsEditing(false);
+    setDubLanguage("original");
   };
 
   const isBusy = isUploading || isProcessing || isRendering;
@@ -164,7 +215,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
   return (
     <>
       <style>{`
-        /* ── Word chip ── */
+        .grainy-upload-box {
+          position: relative;
+          background: radial-gradient(circle at 15% 30%, rgba(37, 99, 235, 0.95) 0%, transparent 65%),
+                      radial-gradient(circle at 85% 20%, rgba(225, 29, 72, 0.9) 0%, transparent 65%),
+                      radial-gradient(circle at 50% 90%, rgba(249, 115, 22, 0.85) 0%, transparent 60%),
+                      #18181b;
+          overflow: hidden;
+        }
+        .grainy-upload-box::before {
+          content: "";
+          position: absolute;
+          inset: 0;
+          background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.25'/%3E%3C/svg%3E");
+          mix-blend-mode: overlay;
+          pointer-events: none;
+        }
+
         .word-chip { transition: background 0.15s, border-color 0.15s, box-shadow 0.15s; }
         .word-chip:focus {
           outline: none;
@@ -172,8 +239,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
           box-shadow: 0 0 0 3px rgba(6,182,212,0.15);
           background: #000;
         }
-
-        /* ── Transcript editor slide-in ── */
         .editor-panel {
           overflow: hidden;
           max-height: 0;
@@ -181,14 +246,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
           transition: max-height 0.55s cubic-bezier(0.4,0,0.2,1), opacity 0.4s ease 0.15s;
         }
         .editor-panel.visible { max-height: 1100px; opacity: 1; }
-
         @keyframes fadeSlideUp {
           from { opacity: 0; transform: translateY(12px); }
           to   { opacity: 1; transform: translateY(0); }
         }
         .editor-header { animation: fadeSlideUp 0.4s ease 0.3s both; }
-
-        /* ── Spinner ── */
         @keyframes spin { to { transform: rotate(360deg); } }
         .spinner {
           width: 16px; height: 16px;
@@ -198,10 +260,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
           animation: spin 0.75s linear infinite;
           flex-shrink: 0;
         }
-
-        /* ══════════════════════════════════════════
-           MOBILE  (< 1024 px) — single column
-        ══════════════════════════════════════════ */
         .page-layout {
           display: flex;
           flex-direction: column;
@@ -209,8 +267,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
           gap: 1.25rem;
           padding: 1.25rem 0 2.5rem;
         }
-
-        /* Hero collapses once a file is picked on mobile */
         .hero-col {
           overflow: hidden;
           transition: max-height 0.45s cubic-bezier(0.4,0,0.2,1),
@@ -222,11 +278,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
         .hero-col.collapsed {
           max-height: 0;
           opacity: 0;
-          margin-bottom: -1.25rem; /* absorb the gap */
+          margin-bottom: -1.25rem;
           pointer-events: none;
         }
-
-        /* Video preview */
         .video-preview {
           width: 100%;
           border-radius: 0.75rem;
@@ -236,10 +290,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
           aspect-ratio: 16/9;
         }
         .video-preview video { width: 100%; height: 100%; object-fit: contain; display: block; }
-
-        /* Buttons — stacked on mobile */
         .btn-row { display: flex; flex-direction: column; gap: 0.625rem; width: 100%; margin-top: 0.875rem; }
-
         .btn {
           width: 100%; padding: 0.9rem 1rem; border-radius: 0.75rem;
           font-size: 0.9375rem; font-weight: 700; border: none; cursor: pointer;
@@ -253,8 +304,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
         .btn-success:hover  { background: rgb(16 185 129); }
         .btn-ghost    { background: #18181b; border: 1px solid #27272a; color: #d4d4d8; }
         .btn-ghost:not(:disabled):hover { color: #fff; background: #27272a; }
-
-        /* Progress badge */
         .progress-badge {
           display: flex; align-items: center; gap: 0.5rem;
           padding: 0.625rem 1rem; margin-top: 0.75rem;
@@ -262,12 +311,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
           border-radius: 0.625rem; color: rgb(103 232 249);
           font-size: 0.875rem; font-weight: 600;
         }
-
-        /* ══════════════════════════════════════════
-           DESKTOP  (≥ 1024 px) — two columns
-           Normal state  : hero | card+editor
-           Editing state : hero fades, card+editor expand to full width
-        ══════════════════════════════════════════ */
         @media (min-width: 1024px) {
           .page-layout {
             display: grid;
@@ -276,34 +319,25 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
             align-items: start;
             padding: 2rem 0;
           }
-
-          /* In editing mode: collapse hero column, right col spans full width */
           .page-layout.editing-mode {
-            grid-template-columns: 1fr;   /* one column — right col only */
+            grid-template-columns: 1fr;
           }
           .page-layout.editing-mode .hero-col {
-            display: none;               /* remove from flow entirely */
+            display: none;
           }
-
-          /* Hero never collapses on desktop (the .collapsed class is mobile-only) */
           .hero-col { max-height: none !important; opacity: 1 !important; }
           .hero-col.collapsed { max-height: none !important; opacity: 1 !important; pointer-events: auto !important; }
-
-          /* Video: fixed height on desktop, no aspect-ratio constraint */
           .video-preview { aspect-ratio: unset; height: 240px; }
-
-          /* Buttons side-by-side on desktop */
           .btn-row { flex-direction: row; }
           .btn-row .btn-ghost   { flex: 0 0 auto; width: auto; padding: 0.875rem 1.5rem; }
           .btn-row .btn-primary { flex: 2; }
           .btn-row .btn-success { flex: 1; }
-          .btn-row .btn-ghost.full { flex: 1; } /* "Process Another" full width equivalent */
+          .btn-row .btn-ghost.full { flex: 1; }
         }
       `}</style>
 
       <div className="max-w-6xl mx-auto px-4 sm:px-6 w-full flex-1 flex flex-col justify-center">
         <div className={`page-layout${isEditing ? " editing-mode" : ""}`}>
-
           <div className={`hero-col space-y-4 lg:space-y-6 text-left${file ? " collapsed" : ""}`}>
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-xs font-bold uppercase tracking-widest">
               <Sparkles size={14} /> AI Video Captioning
@@ -328,22 +362,20 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
           </div>
 
           <div className="flex flex-col gap-4 min-w-0">
-
             <div className="relative group w-full">
               <div className="absolute -inset-0.5 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-2xl blur-md opacity-20 group-hover:opacity-40 transition duration-500 pointer-events-none" />
 
               <div className="relative flex flex-col w-full bg-zinc-950 border border-zinc-900 rounded-2xl p-4 sm:p-6 overflow-hidden">
-
                 {!previewUrl ? (
-                  <div className="flex flex-col items-center w-full py-8 text-center">
-                    <div className="mb-4 p-4 rounded-full bg-cyan-500/5 border border-cyan-500/10 text-cyan-400">
-                      <Upload size={28} />
+                  <div className="grainy-upload-box flex flex-col items-center w-full py-12 px-4 rounded-xl text-center border border-white/10 shadow-2xl">
+                    <div className="mb-6 p-4 rounded-full bg-white/10 border border-white/20 text-white shadow-inner backdrop-blur-md">
+                      <Upload size={32} />
                     </div>
-                    <h2 className="text-lg sm:text-xl font-bold mb-1 text-zinc-100">Drop your footage</h2>
-                    <p className="text-zinc-500 text-xs mb-6 leading-relaxed">
+                    <h2 className="text-xl sm:text-2xl font-black mb-2 text-white drop-shadow-md">Drop your footage</h2>
+                    <p className="text-white/80 text-xs sm:text-sm mb-8 leading-relaxed font-medium drop-shadow">
                       MP4, MOV or WebM · Optimal for 9:16 vertical · Max 50 MB
                     </p>
-                    <label className="px-8 py-3.5 bg-zinc-100 text-black hover:bg-white font-bold text-sm rounded-xl cursor-pointer transition-all active:scale-95 shadow-lg select-none">
+                    <label className="px-8 py-3.5 bg-white text-black hover:bg-zinc-100 font-bold text-sm rounded-xl cursor-pointer transition-all active:scale-95 shadow-xl select-none">
                       Select Video
                       <input type="file" className="hidden" accept="video/mp4,video/quicktime,video/webm" onChange={handleFileSelect} />
                     </label>
@@ -419,7 +451,20 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\
                         <span className="text-zinc-500 text-xs font-medium flex-shrink-0">{transcript.length} words</span>
                       )}
                     </div>
-                    <span className="text-zinc-600 text-xs flex-shrink-0 ml-2">Tap any word to edit</span>
+                    
+                    <div className="flex items-center gap-3">
+                      <select 
+                        value={dubLanguage} 
+                        onChange={(e) => setDubLanguage(e.target.value)}
+                        className="bg-zinc-900 border border-zinc-700 text-zinc-300 text-xs rounded-md px-2 py-1 outline-none focus:border-cyan-500 cursor-pointer"
+                      >
+                        <option value="original">Original Audio</option>
+                        <option value="hi">Hindi Dub</option>
+                        <option value="es">Spanish Dub</option>
+                        <option value="fr">French Dub</option>
+                        <option value="ru">Russian Dub</option>
+                      </select>
+                    </div>
                   </div>
 
                   <div className="h-64 sm:h-72 lg:h-96 overflow-y-auto p-4 sm:p-5">
